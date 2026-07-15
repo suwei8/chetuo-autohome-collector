@@ -49,16 +49,21 @@ interface CliArgs {
   only: number[] | null;
   skipStopped: boolean;
   resume: boolean;
+  shard: { index: number; total: number } | null;
 }
 
 function parseArgs(): CliArgs {
   const args = process.argv.slice(2);
-  const opts: CliArgs = { limit: null, only: null, skipStopped: false, resume: false };
+  const opts: CliArgs = { limit: null, only: null, skipStopped: false, resume: false, shard: null };
   for (const arg of args) {
     if (arg.startsWith('--limit=')) opts.limit = Number(arg.slice(8));
     else if (arg.startsWith('--only=')) opts.only = arg.slice(7).split(',').map(Number);
     else if (arg === '--skip-stopped') opts.skipStopped = true;
     else if (arg === '--resume') opts.resume = true;
+    else if (arg.startsWith('--shard=')) {
+      const [idx, total] = arg.slice(8).split('/').map(Number);
+      opts.shard = { index: idx, total };
+    }
   }
   return opts;
 }
@@ -187,7 +192,7 @@ async function collectSeries(
 async function main(): Promise<void> {
   const args = parseArgs();
   console.log('=== 汽车之家车型库采集器（极简版）===');
-  console.log(`limit=${args.limit ?? '无'} only=${args.only ?? '无'} skipStopped=${args.skipStopped} resume=${args.resume}`);
+  console.log(`limit=${args.limit ?? '无'} only=${args.only ?? '无'} skipStopped=${args.skipStopped} resume=${args.resume} shard=${args.shard ? `${args.shard.index}/${args.shard.total}` : '无'}`);
   console.log();
 
   const brandsPath = await downloadBrandsCsv();
@@ -200,6 +205,10 @@ async function main(): Promise<void> {
     entries = entries.filter((e) => s.has(e.seriesId));
   }
   if (args.skipStopped) entries = entries.filter((e) => !e.stopped);
+  if (args.shard) {
+    // 分片：按 seriesId 取模分配
+    entries = entries.filter((e) => e.seriesId % args.shard!.total === args.shard!.index);
+  }
   if (args.limit !== null) entries = entries.slice(0, args.limit);
 
   console.log(`筛选后: ${entries.length} 个车系\n`);

@@ -1,28 +1,32 @@
-name: Collect AutoHome (Small)
+name: Collect AutoHome (Full)
 
-# 阶段 1：小规模验证采集（5 个车系），确认解析逻辑正确。
-# 手动触发 + push 到 main 时自动跑。
+# 阶段 2：全量采集。
+# 3891 个车系，每个约 7 秒（2 次请求 + 限速），总计约 7.5 小时。
+# GitHub Actions 单 job 限 6 小时，用 4 路矩阵分片并行。
+# 每个分片约 973 个车系，约 1.9 小时。
+#
+# 手动触发，支持断点续传。
 on:
   workflow_dispatch:
     inputs:
-      limit:
-        description: '采集车系数量（默认 5）'
-        required: false
-        default: '5'
-      only:
-        description: '只采指定 seriesId（逗号分隔，如 18,3170）'
-        required: false
-        default: ''
       skip-stopped:
         description: '跳过停售车系'
         type: boolean
         required: false
         default: true
+      shards:
+        description: '分片数（默认 4）'
+        required: false
+        default: '4'
 
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
 
     steps:
       - name: Checkout
@@ -39,14 +43,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile || pnpm install
 
-      - name: Run collector (small scale)
+      - name: Run collector (shard ${{ matrix.shard }})
         run: |
-          ARGS=""
-          if [ -n "${{ github.event.inputs.only }}" ]; then
-            ARGS="--only=${{ github.event.inputs.only }}"
-          else
-            ARGS="--limit=${{ github.event.inputs.limit || '5' }}"
-          fi
+          ARGS="--shard=${{ matrix.shard }}/${{ github.event.inputs.shards || '4' }}"
           if [ "${{ github.event.inputs.skip-stopped }}" = "true" ]; then
             ARGS="$ARGS --skip-stopped"
           fi
@@ -56,23 +55,21 @@ jobs:
       - name: Show summary
         if: always()
         run: |
-          echo "=== 采集进度 ==="
+          echo "=== 分片 ${{ matrix.shard }} 采集进度 ==="
           cat output/progress.json 2>/dev/null | python3 -m json.tool || echo "无 progress"
           echo ""
           echo "=== 输出文件 ==="
           ls -lh output/ 2>/dev/null
           echo ""
-          echo "=== CSV 前 30 行 ==="
+          echo "=== CSV 行数 ==="
           if [ -f output/car_models.csv ]; then
-            head -30 output/car_models.csv
-            echo ""
-            echo "总行数: $(wc -l < output/car_models.csv)"
+            wc -l output/car_models.csv
           fi
 
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: car-library-data
+          name: car-library-shard-${{ matrix.shard }}
           path: output/
-          retention-days: 7
+          retention-days: 14
