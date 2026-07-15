@@ -1,0 +1,20 @@
+{
+  "name": "chetuo-autohome-collector",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "从汽车之家采集车型库数据（品牌/车系/年款/车型/参数配置）",
+  "scripts": {
+    "collect": "tsx src/collect.ts",
+    "collect:small": "tsx src/collect.ts --limit=5",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "iconv-lite": "^0.6.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

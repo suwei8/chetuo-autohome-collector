@@ -1,0 +1,78 @@
+name: Collect AutoHome (Small)
+
+# 阶段 1：小规模验证采集（5 个车系），确认解析逻辑正确。
+# 手动触发 + push 到 main 时自动跑。
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: '采集车系数量（默认 5）'
+        required: false
+        default: '5'
+      only:
+        description: '只采指定 seriesId（逗号分隔，如 18,3170）'
+        required: false
+        default: ''
+      skip-stopped:
+        description: '跳过停售车系'
+        type: boolean
+        required: false
+        default: true
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile || pnpm install
+
+      - name: Run collector (small scale)
+        run: |
+          ARGS=""
+          if [ -n "${{ github.event.inputs.only }}" ]; then
+            ARGS="--only=${{ github.event.inputs.only }}"
+          else
+            ARGS="--limit=${{ github.event.inputs.limit || '5' }}"
+          fi
+          if [ "${{ github.event.inputs.skip-stopped }}" = "true" ]; then
+            ARGS="$ARGS --skip-stopped"
+          fi
+          echo "运行: pnpm collect $ARGS"
+          pnpm collect $ARGS
+
+      - name: Show summary
+        if: always()
+        run: |
+          echo "=== 采集汇总 ==="
+          cat output/summary.json 2>/dev/null | python3 -m json.tool || echo "无 summary"
+          echo ""
+          echo "=== 输出文件 ==="
+          ls -lh output/data/ 2>/dev/null || echo "无数据文件"
+          echo ""
+          echo "=== 第一个 CSV 前 20 行 ==="
+          FIRST_CSV=$(ls output/data/*.csv 2>/dev/null | head -1)
+          if [ -n "$FIRST_CSV" ]; then
+            echo "文件: $FIRST_CSV"
+            head -20 "$FIRST_CSV"
+          fi
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: car-library-data
+          path: output/
+          retention-days: 7
