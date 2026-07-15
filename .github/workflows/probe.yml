@@ -1,0 +1,41 @@
+name: Probe AutoHome
+
+# 阶段 0：验证 GitHub Actions IP 段是否被汽车之家封锁。
+# 手动触发 + 每天凌晨 4 点（UTC）自动跑一次，连续观察几天。
+on:
+  workflow_dispatch:
+  schedule:
+    # 每天 UTC 04:00（北京时间 12:00）跑一次
+    - cron: "0 4 * * *"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show runner info
+        run: |
+          echo "=== Runner 公网 IP ==="
+          curl -sS https://api.ipify.org || echo "无法获取公网 IP"
+          echo ""
+          echo "=== Runner 解析 car.autohome.com.cn ==="
+          nslookup car.autohome.com.cn || true
+          echo ""
+          echo "=== 时间 ==="
+          date -u
+
+      - name: Probe AutoHome
+        run: bash scripts/probe-autohome.sh
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## 🔍 汽车之家连通性探测结果" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "请在上方 workflow 日志中查看每轮探测的 http 状态码、响应大小、是否含正常内容、是否命中封禁页。" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**判定**：如果三轮都是 \`http=200 + has_content=yes + blocked=no\`，说明 GitHub Actions IP 可用；否则需要在服务器/VPS 上跑采集。" >> $GITHUB_STEP_SUMMARY
