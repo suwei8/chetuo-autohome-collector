@@ -11,7 +11,7 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -28,8 +28,11 @@ jobs:
           echo "=== 时间 ==="
           date -u
 
-      - name: Probe AutoHome
+      - name: Probe AutoHome (basic)
         run: bash scripts/probe-autohome.sh
+
+      - name: Probe AutoHome (detail)
+        run: bash scripts/probe-autohome-detail.sh
 
       - name: Summary
         if: always()
