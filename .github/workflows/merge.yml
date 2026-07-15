@@ -1,0 +1,74 @@
+name: Merge Car Library
+
+# 阶段 3：合并 4 个分片的 CSV，转换为 car-models.json，上传 artifact。
+# 在 collect-full 完成后手动触发。
+on:
+  workflow_dispatch:
+    inputs:
+      run-id:
+        description: 'collect-full 的 run ID（从 URL 获取）'
+        required: true
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile || pnpm install
+
+      - name: Download all shard artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p output
+          # 下载所有 4 个分片的 artifact
+          for i in 0 1 2 3; do
+            echo "下载分片 $i..."
+            gh run download ${{ github.event.inputs.run-id }} \
+              -R suwei8/chetuo-autohome-collector \
+              -n car-library-shard-$i \
+              -D output/shard-$i || echo "分片 $i 下载失败（可能该分片无数据）"
+          done
+
+          # 把所有分片的 car_models.csv 合并到一个文件
+          echo "合并 CSV..."
+          echo "品牌,车系,specId,车型名称,年份,排量L" > output/car_models.csv
+          for i in 0 1 2 3; do
+            if [ -f output/shard-$i/car_models.csv ]; then
+              # 跳过表头行
+              tail -n +2 output/shard-$i/car_models.csv >> output/car_models.csv
+            fi
+          done
+          echo "合并后总行数: $(wc -l < output/car_models.csv)"
+
+      - name: Run merge script
+        run: pnpm merge
+
+      - name: Show summary
+        run: |
+          echo "=== 合并结果 ==="
+          ls -lh output/car-models.json
+          echo ""
+          echo "=== JSON 前 500 字符 ==="
+          head -c 500 output/car-models.json
+          echo ""
+
+      - name: Upload merged artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: car-models-json
+          path: output/car-models.json
+          retention-days: 30
