@@ -7,6 +7,7 @@
   "scripts": {
     "collect": "tsx src/collect.ts",
     "collect:small": "tsx src/collect.ts --limit=5",
+    "merge": "tsx src/merge.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
