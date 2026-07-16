@@ -39,8 +39,8 @@ const CSV_FILE = join(OUTPUT_DIR, 'car_models.csv');
 const PROGRESS_FILE = join(OUTPUT_DIR, 'progress.json');
 const BRANDS_CSV_URL =
   'https://raw.githubusercontent.com/swoiow/autohome/main/brands.csv';
-const REQUEST_DELAY_MS = 2000;
-const JITTER_MS = 1500;
+const REQUEST_DELAY_MS = 800;
+const JITTER_MS = 500;
 
 // ─── 参数解析 ──────────────────────────────────────────
 
