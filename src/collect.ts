@@ -1,5 +1,5 @@
 /**
- * 采集器主入口（极简版）。
+ * 采集器主入口（全年款版）。
  *
  * 只采集：品牌、车系、车型名称、年份、排量。
  * 输出单一 CSV：output/car_models.csv
@@ -7,9 +7,9 @@
  * 流程：
  *   1. 下载 swoiow/autohome 的 brands.csv 作为车系 ID 清单
  *   2. 对每个车系：
- *      a. 抓车系页 /price/series-{id}.html → 提取 spec ID 列表
- *      b. 抓第一个 spec 的参数页 → 解析全部车型名称 + 排量
- *   3. 输出 output/car_models.csv（品牌,车系,specId,车型名称,年份,排量L）
+ *      a. 抓停售页 /{id}/sale.html → 提取所有停售年款的车型列表
+ *      b. 抓配置页 /config/series/{id}.html → 提取在售年款的车型列表（含排量、品牌）
+ *      c. 合并输出
  *
  * 用法：
  *   pnpm collect              # 全量
@@ -23,10 +23,10 @@
 import { writeFileSync, mkdirSync, existsSync, readFileSync, appendFileSync } from 'fs';
 import { join } from 'path';
 import {
-  fetchSeriesPage,
-  fetchSpecPage,
-  extractSpecIds,
-  parseModels,
+  fetchSalePage,
+  fetchConfigSeriesPage,
+  parseSalePage,
+  parseConfigSeriesPage,
   sleep,
   type CarModel,
 } from './autohome.js';
@@ -149,49 +149,89 @@ async function collectSeries(
   const { seriesId, name, stopped } = entry;
   const label = `[${index + 1}/${total}] series-${seriesId} ${name}${stopped ? ' (停售)' : ''}`;
 
-  console.log(`${label} → 抓取车系页...`);
+  const allModels: CarModel[] = [];
+  let brand = '';
 
-  // Step 1: 车系页 → spec IDs
-  let specIds: number[];
-  try {
-    const html = await fetchSeriesPage(seriesId);
-    specIds = extractSpecIds(html);
-    await sleep(REQUEST_DELAY_MS + Math.random() * JITTER_MS);
-  } catch (err: any) {
-    console.error(`${label} → 车系页失败: ${err.message}`);
-    return { seriesId, seriesName: name, modelCount: 0, status: 'error', error: err.message };
+  // Step 1: 抓停售页 → 所有停售年款的车型
+  if (!stopped) {
+    // 非停售车系才有停售页（停售车系本身就是停售页内容）
+    // 但实际上所有车系都可以尝试抓停售页
   }
 
-  if (specIds.length === 0) {
-    console.warn(`${label} → 无 spec ID`);
+  try {
+    console.log(`${label} → 抓取停售页...`);
+    const saleHtml = await fetchSalePage(seriesId);
+    const saleModels = parseSalePage(saleHtml, name);
+    allModels.push(...saleModels);
+    // 从停售页提取品牌名
+    if (saleModels.length > 0 && saleModels[0].brand) {
+      brand = saleModels[0].brand;
+    }
+    console.log(`${label} → 停售页: ${saleModels.length} 车型${brand ? ` (品牌: ${brand})` : ''}`);
+    await sleep(REQUEST_DELAY_MS + Math.random() * JITTER_MS);
+  } catch (err: any) {
+    // 停售页可能不存在（新车系），忽略错误
+    console.warn(`${label} → 停售页失败（可能无停售年款）: ${err.message}`);
+  }
+
+  // Step 2: 抓配置页 → 在售年款的车型（含排量）
+  try {
+    console.log(`${label} → 抓取配置页...`);
+    const configHtml = await fetchConfigSeriesPage(seriesId);
+    const configModels = parseConfigSeriesPage(configHtml, name);
+    if (configModels.length > 0) {
+      // 如果还没有品牌，从配置页获取
+      if (!brand && configModels[0].brand) {
+        brand = configModels[0].brand;
+      }
+      // 用配置页的排量数据补充停售页的车型（同 specId）
+      const configDispMap = new Map(configModels.map((m) => [m.specId, m.displacement]));
+      for (const m of allModels) {
+        if (!m.displacement && configDispMap.has(m.specId)) {
+          m.displacement = configDispMap.get(m.specId)!;
+        }
+      }
+      // 添加在售年款的车型（去重）
+      const existingIds = new Set(allModels.map((m) => m.specId));
+      for (const m of configModels) {
+        if (!existingIds.has(m.specId)) {
+          allModels.push(m);
+        }
+      }
+    }
+    await sleep(REQUEST_DELAY_MS + Math.random() * JITTER_MS);
+  } catch (err: any) {
+    console.warn(`${label} → 配置页失败: ${err.message}`);
+  }
+
+  // 填充品牌到所有车型
+  if (brand) {
+    for (const m of allModels) {
+      if (!m.brand) m.brand = brand;
+    }
+  }
+
+  if (allModels.length === 0) {
+    console.warn(`${label} → 无车型数据`);
     return { seriesId, seriesName: name, modelCount: 0, status: 'no_specs' };
   }
 
-  // Step 2: 参数页 → 车型列表
-  try {
-    const specHtml = await fetchSpecPage(specIds[0]);
-    const models = parseModels(specHtml, name);
-    await sleep(REQUEST_DELAY_MS + Math.random() * JITTER_MS);
+  // 按年份和 specId 排序
+  allModels.sort((a, b) => {
+    if (a.year !== b.year) return b.year.localeCompare(a.year);
+    return a.specId - b.specId;
+  });
 
-    if (models.length === 0) {
-      console.warn(`${label} → 未解析到车型`);
-      return { seriesId, seriesName: name, modelCount: 0, status: 'no_config' };
-    }
-
-    appendModels(models);
-    console.log(`${label} → ${models.length} 车型 (品牌: ${models[0].brand})`);
-    return { seriesId, seriesName: name, modelCount: models.length, status: 'ok' };
-  } catch (err: any) {
-    console.error(`${label} → 参数页失败: ${err.message}`);
-    return { seriesId, seriesName: name, modelCount: 0, status: 'error', error: err.message };
-  }
+  appendModels(allModels);
+  console.log(`${label} → ${allModels.length} 车型 (${new Set(allModels.map((m) => m.year)).size} 年款, 品牌: ${brand || '未知'})`);
+  return { seriesId, seriesName: name, modelCount: allModels.length, status: 'ok' };
 }
 
 // ─── 主流程 ───────────────────────────────────────────
 
 async function main(): Promise<void> {
   const args = parseArgs();
-  console.log('=== 汽车之家车型库采集器（极简版）===');
+  console.log('=== 汽车之家车型库采集器（全年款版）===');
   console.log(`limit=${args.limit ?? '无'} only=${args.only ?? '无'} skipStopped=${args.skipStopped} resume=${args.resume} shard=${args.shard ? `${args.shard.index}/${args.shard.total}` : '无'}`);
   console.log();
 

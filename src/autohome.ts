@@ -7,6 +7,8 @@
  * 编码：
  *   - 车系页 /price/series-{id}.html 是 GBK
  *   - 参数页 /config/spec/{id}.html 是 UTF-8
+ *   - 停售页 /{id}/sale.html 是 GBK
+ *   - 配置页 /config/series/{id}.html 是 UTF-8
  */
 
 import iconv from 'iconv-lite';
@@ -45,6 +47,18 @@ export async function fetchSeriesPage(seriesId: number): Promise<string> {
 /** 抓取参数页（UTF-8）。 */
 export async function fetchSpecPage(specId: number): Promise<string> {
   const buf = await httpGet(`https://car.autohome.com.cn/config/spec/${specId}.html`);
+  return buf.toString('utf-8');
+}
+
+/** 抓取停售页（GBK）——包含所有停售年款的全部车型列表。 */
+export async function fetchSalePage(seriesId: number): Promise<string> {
+  const buf = await httpGet(`https://www.autohome.com.cn/${seriesId}/sale.html`);
+  return iconv.decode(buf, 'gbk');
+}
+
+/** 抓取车系配置页（UTF-8）——包含在售年款的车型列表和参数。 */
+export async function fetchConfigSeriesPage(seriesId: number): Promise<string> {
+  const buf = await httpGet(`https://car.autohome.com.cn/config/series/${seriesId}.html`);
   return buf.toString('utf-8');
 }
 
@@ -156,6 +170,23 @@ function extractBrandFromTitle(specHtml: string): string {
 }
 
 /**
+ * 从停售页提取品牌名。
+ * 页面格式：<a href="/78/">广汽本田-雅阁</a> 或 <a href="/78/">本田-雅阁</a>
+ * 取 "-" 前面的部分作为品牌名。
+ */
+function extractBrandFromSalePage(saleHtml: string): string {
+  // 匹配 <a href="/XXXX/">品牌-车系名</a> 或 <a href="/XXXX/">品牌车系名</a>
+  const m = /<a\s+href="\/\d+\/">([^<]+)<\/a>/.exec(saleHtml);
+  if (!m) return '';
+  const text = stripTags(m[1]);
+  // 格式: 广汽本田-雅阁 → 品牌=广汽本田
+  // 或: 本田-雅阁 → 品牌=本田
+  const dashIdx = text.indexOf('-');
+  if (dashIdx > 0) return text.substring(0, dashIdx).trim();
+  return '';
+}
+
+/**
  * 从参数页解析所有车型信息（品牌、车系、车型名称、年份、排量）。
  *
  * 排量优先从参数表拿（精确），fallback 从车型名称提取。
@@ -218,6 +249,52 @@ export function parseModels(
   }
 
   return models;
+}
+
+/**
+ * 从停售页解析所有停售年款的车型列表。
+ *
+ * 页面格式（GBK）：
+ *   <a title='2025款 260TURBO 舒适版' href='//www.autohome.com.cn/spec/70014/'>2025款 260TURBO 舒适版</a>
+ *   <a href="/78/">广汽本田-雅阁</a>  ← 品牌信息
+ *
+ * 返回所有停售年款的车型（specid + 名称 + 年份 + 品牌）。
+ */
+export function parseSalePage(saleHtml: string, series: string): CarModel[] {
+  const models: CarModel[] = [];
+  const seen = new Set<number>();
+
+  // 提取品牌名
+  const brand = extractBrandFromSalePage(saleHtml);
+
+  // 匹配 <a title='YYYY款 ...' href='//www.autohome.com.cn/spec/XXXXX/'>...</a>
+  const re = /<a\s+title='([^']+)'\s+[^>]*href='\/\/www\.autohome\.com\.cn\/spec\/(\d+)\/'/g;
+  let m: RegExpExecArray | null;
+
+  while ((m = re.exec(saleHtml)) !== null) {
+    const modelName = m[1].trim();
+    const specId = Number(m[2]);
+    if (seen.has(specId)) continue;
+    seen.add(specId);
+
+    const year = extractYear(modelName);
+    const displacement = extractDisplacementFromName(modelName);
+
+    models.push({ specId, brand, series, modelName, year, displacement });
+  }
+
+  return models;
+}
+
+/**
+ * 从车系配置页解析在售年款的车型列表（含排量和品牌）。
+ *
+ * 页面格式（UTF-8）：
+ *   var config = {"result":{"paramtypeitems":[...]}};
+ *   var specIDs = [78334, 78335, 78336];
+ */
+export function parseConfigSeriesPage(configHtml: string, series: string): CarModel[] {
+  return parseModels(configHtml, series);
 }
 
 export function sleep(ms: number): Promise<void> {
